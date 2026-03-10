@@ -1,5 +1,5 @@
 --[[
-    Loxx Interrupt Tracker v1.2.4.5 - Midnight 12.0.x
+    Loxx Interrupt Tracker v1.2.4.6 - Midnight 12.0.x
 
     Maintained by Loxxar.
 
@@ -15,7 +15,7 @@
 
 local ADDON_NAME = "LoxxInterruptTracker"
 local MSG_PREFIX = "LOXX"
-local LOXX_VERSION = "1.2.4.5"
+local LOXX_VERSION = "1.2.4.6"
 local LOXX_DB_VERSION = 4   -- bump when SavedVars schema changes
 
 ------------------------------------------------------------
@@ -1809,7 +1809,7 @@ local function CreateConfigPanel()
         return
     end
 
-    local PW, PH = 600, 580
+    local PW, PH = 600, 660
     local MID = 300
     local SL_W = 210
 

@@ -4,6 +4,9 @@
 ]]
 
 LOXX_CHANGELOG = [[
+|cFFFFD100v1.2.4.6|r
+• Config window: increased height for full footer visibility
+
 |cFFFFD100v1.2.4.5|r
 • Config footer: more bottom spacing
 
