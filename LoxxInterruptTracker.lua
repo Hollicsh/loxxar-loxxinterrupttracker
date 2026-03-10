@@ -142,6 +142,7 @@ local loxxCurrentRun  = nil   -- stats: current instance run
 local statsFrame      = nil   -- stats window
 local rotationPanel   = nil   -- rotation management panel
 local rotationOrder   = {}    -- array of player names (ordered)
+local ROTATION_MAINTENANCE = true  -- true = section Kick Rotation grisée, clics désactivés
 local rotationIndex   = 1     -- current player's turn (1-based)
 -- Error log (in-memory, also persisted via SavedVars)
 local loxxErrorLog = {}
@@ -1883,6 +1884,20 @@ local function CreateConfigPanel()
     local alphaSlider = MakeSlider("LOXX_Slider_alpha", configFrame)
     alphaSlider:SetPoint("TOPLEFT", SL_XL, yL)
     alphaSlider:SetSize(SL_W, 26)
+    alphaSlider:SetMinMaxValues(0.3, 1.0)
+    alphaSlider:SetValueStep(0.05)
+    alphaSlider:SetObeyStepOnDrag(true)
+    alphaSlider:SetValue(db.alpha)
+    alphaSlider.Text:SetText("Opacity: " .. string.format("%.0f%%", (db.alpha or 0.9) * 100))
+    alphaSlider.Low:SetText("30%")
+    alphaSlider.High:SetText("100%")
+    alphaSlider:SetScript("OnValueChanged", function(self, value)
+        value = math.floor(value * 20 + 0.5) / 20
+        db.alpha = value
+        self.Text:SetText("Opacity: " .. string.format("%.0f%%", value * 100))
+        if mainFrame then mainFrame:SetAlpha(value) end
+    end)
+
     yL = yL - 48
     local initW = db.frameWidth or 180
     local widthSlider = MakeSlider("LOXX_Slider_width", configFrame)
@@ -2095,6 +2110,7 @@ local function CreateConfigPanel()
     if rotLbl then rotLbl:SetText("Enable Rotation") end
     rotCb:SetChecked(db.rotationEnabled)
     rotCb:SetScript("OnClick", function(self)
+        if ROTATION_MAINTENANCE then return end
         db.rotationEnabled = self:GetChecked() and true or false
         if LOXXSavedVars then LOXXSavedVars.rotationEnabled = db.rotationEnabled end
     end)
@@ -2104,7 +2120,36 @@ local function CreateConfigPanel()
     mgrBtn:SetSize(130, 22)
     mgrBtn:SetPoint("TOPLEFT", R_CBX1, yR)
     mgrBtn:SetText("Manage Kick Rotation")
-    mgrBtn:SetScript("OnClick", function() ShowRotationPanel() end)
+    mgrBtn:SetScript("OnClick", function()
+        if ROTATION_MAINTENANCE then return end
+        ShowRotationPanel()
+    end)
+
+    -- Overlay "maintenance" sur la section ROTATION
+    if ROTATION_MAINTENANCE then
+        rotCb:Disable()
+        mgrBtn:Disable()
+        local rotOverlay = CreateFrame("Frame", nil, configFrame)
+        rotOverlay:SetFrameLevel(rotCb:GetFrameLevel() + 20)
+        rotOverlay:SetPoint("TOPLEFT", rotCb, "TOPLEFT", -5, 5)
+        rotOverlay:SetPoint("BOTTOMRIGHT", mgrBtn, "BOTTOMRIGHT", 140, -24)
+        rotOverlay:EnableMouse(true)
+        local rotBg = rotOverlay:CreateTexture(nil, "BACKGROUND")
+        rotBg:SetAllPoints()
+        rotBg:SetTexture(FLAT_TEX)
+        rotBg:SetVertexColor(0.2, 0.2, 0.2, 0.75)
+        -- Barre horizontale "en travers"
+        local rotBar = rotOverlay:CreateTexture(nil, "OVERLAY")
+        rotBar:SetTexture(FLAT_TEX)
+        rotBar:SetVertexColor(0.6, 0.6, 0.6, 0.95)
+        rotBar:SetPoint("LEFT", rotOverlay, "LEFT", 0, 0)
+        rotBar:SetPoint("RIGHT", rotOverlay, "RIGHT", 0, 0)
+        rotBar:SetPoint("CENTER", rotOverlay, "CENTER", 0, 0)
+        rotBar:SetHeight(2)
+        local rotTxt = rotOverlay:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        rotTxt:SetPoint("TOP", mgrBtn, "BOTTOM", 0, -4)
+        rotTxt:SetText("|cFF888888maintenance|r")
+    end
 
     -- ── FOOTER ───────────────────────────────────────────────────
     do
@@ -2651,6 +2696,7 @@ local function BuildRotationPanel()
 end
 
 ShowRotationPanel = function()
+    if ROTATION_MAINTENANCE then return end
     if not rotationPanel then
         if not configFrame then return end
 
