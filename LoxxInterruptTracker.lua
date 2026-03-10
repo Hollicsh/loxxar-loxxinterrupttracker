@@ -2213,7 +2213,7 @@ local function CreateConfigPanel()
     statsBtn:SetScript("OnClick", function() ShowStatsWindow() end)
 
     local footerMsg = configFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    footerMsg:SetPoint("BOTTOM", 0, 30)
+    footerMsg:SetPoint("BOTTOM", 0, 50)
     footerMsg:SetText("Thanks to my favorite haters who pushed me to continue this addon  #FUALL")
 
     local footerVer = configFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
