@@ -1,5 +1,5 @@
 --[[
-    Loxx Interrupt Tracker v1.2.4.4 - Midnight 12.0.x
+    Loxx Interrupt Tracker v1.2.4.5 - Midnight 12.0.x
 
     Maintained by Loxxar.
 
@@ -15,7 +15,7 @@
 
 local ADDON_NAME = "LoxxInterruptTracker"
 local MSG_PREFIX = "LOXX"
-local LOXX_VERSION = "1.2.4.4"
+local LOXX_VERSION = "1.2.4.5"
 local LOXX_DB_VERSION = 4   -- bump when SavedVars schema changes
 
 ------------------------------------------------------------
@@ -2213,11 +2213,11 @@ local function CreateConfigPanel()
     statsBtn:SetScript("OnClick", function() ShowStatsWindow() end)
 
     local footerMsg = configFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    footerMsg:SetPoint("BOTTOM", 0, 50)
+    footerMsg:SetPoint("BOTTOM", 0, 64)
     footerMsg:SetText("Thanks to my favorite haters who pushed me to continue this addon  #FUALL")
 
     local footerVer = configFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    footerVer:SetPoint("BOTTOM", 0, 14)
+    footerVer:SetPoint("BOTTOM", 0, 28)
     footerVer:SetText("|cFF888888v" .. LOXX_VERSION .. "|r")
 
     configFrame:Show()
