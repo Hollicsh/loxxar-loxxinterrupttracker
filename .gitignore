@@ -1,5 +1,6 @@
 .DS_Store
 .claude/
+push.sh
 *.swp
 *.swo
 Thumbs.db
