@@ -4,6 +4,9 @@
 ]]
 
 LOXX_CHANGELOG = [[
+|cFFFFD100v1.2.4.4|r
+• Option to hide "X kicks ready" bar (Settings / /loxx)
+
 |cFFFFD100v1.2.4.3|r
 • Kick Rotation: section maintenance – removed gray bar, "Under Maintenance" label
 

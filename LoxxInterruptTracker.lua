@@ -1,5 +1,5 @@
 --[[
-    Loxx Interrupt Tracker v1.2.4 - Midnight 12.0.x
+    Loxx Interrupt Tracker v1.2.4.4 - Midnight 12.0.x
 
     Maintained by Loxxar.
 
@@ -15,7 +15,7 @@
 
 local ADDON_NAME = "LoxxInterruptTracker"
 local MSG_PREFIX = "LOXX"
-local LOXX_VERSION = "1.2.4.3"
+local LOXX_VERSION = "1.2.4.4"
 local LOXX_DB_VERSION = 4   -- bump when SavedVars schema changes
 
 ------------------------------------------------------------
