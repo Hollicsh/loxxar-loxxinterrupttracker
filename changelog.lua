@@ -4,6 +4,11 @@
 ]]
 
 LOXX_CHANGELOG = [[
+|cFFFFD100v1.2.5.4|r
+• New Commands button in Settings footer (/loxx help)
+• Preset selectors switched to Blizzard dropdown style
+• Stats window now shows an empty-state instead of blank panel
+
 |cFFFFD100v1.2.5.3|r
 • New preset dropdowns for fonts, colors, and bar styles
 • Settings window expanded so the footer stays visible

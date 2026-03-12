@@ -1,5 +1,5 @@
 --[[
-    Loxx Interrupt Tracker v1.2.4.7 - Midnight 12.0.x
+    Loxx Interrupt Tracker v1.2.5.4 - Midnight 12.0.x
 
     Maintained by Loxxar.
 
@@ -15,7 +15,7 @@
 
 local ADDON_NAME = "LoxxInterruptTracker"
 local MSG_PREFIX = "LOXX"
-local LOXX_VERSION = "1.2.5.3"
+local LOXX_VERSION = "1.2.5.4"
 local LOXX_DB_VERSION = 4   -- bump when SavedVars schema changes
 
 ------------------------------------------------------------
@@ -85,18 +85,18 @@ local FONT_PRESETS = {
 }
 
 local FONT_COLOR_PRESETS = {
-    { label = "Blanc", color = {1, 1, 1} },
-    { label = "Jaune", color = {1, 0.82, 0} },
-    { label = "Vert", color = {0.2, 1, 0.2} },
-    { label = "Bleu", color = {0.4, 0.8, 1} },
-    { label = "Rouge", color = {1, 0.4, 0.4} },
+    { label = "White", color = {1, 1, 1} },
+    { label = "Amber", color = {1, 0.82, 0} },
+    { label = "Verdant", color = {0.2, 1, 0.2} },
+    { label = "Sky", color = {0.4, 0.8, 1} },
+    { label = "Carnelian", color = {1, 0.4, 0.4} },
 }
 
 local BAR_TEXTURE_PRESETS = {
-    { label = "Classique", texture = "Interface\\BUTTONS\\WHITE8X8" },
-    { label = "Lisse", texture = "Interface\\TARGETINGFRAME\\UI-StatusBar" },
+    { label = "Classic", texture = "Interface\\BUTTONS\\WHITE8X8" },
+    { label = "Smooth", texture = "Interface\\TARGETINGFRAME\\UI-StatusBar" },
     { label = "Raid", texture = "Interface\\RaidFrame\\Raid-Bar-Hp-Fill" },
-    { label = "Compétences", texture = "Interface\\PaperDollInfoFrame\\UI-Character-Skills-Bar" },
+    { label = "Skills", texture = "Interface\\PaperDollInfoFrame\\UI-Character-Skills-Bar" },
 }
 
 local DEFAULTS = {
@@ -132,69 +132,47 @@ local function SK(key, fallback)
     return (SOUNDKIT and SOUNDKIT[key]) or fallback
 end
 
-local presetDropdown
-local presetButtons = {}
-local function ShowPresetDropdown(anchor, options, onSelect)
-    if not presetDropdown then
-        presetDropdown = CreateFrame("Frame", nil, UIParent)
-        presetDropdown:SetFrameStrata("TOOLTIP")
-        presetDropdown:SetBackdrop({ bgFile = FLAT_TEX, edgeFile = FLAT_TEX, edgeSize = 1 })
-        presetDropdown:SetBackdropColor(0.06, 0.06, 0.06, 0.96)
-        presetDropdown:SetBackdropBorderColor(0.3, 0.28, 0.18, 0.9)
-        presetDropdown:SetScript("OnLeave", function(self) self:Hide() end)
-        presetDropdown:SetScript("OnHide", function(self)
-            self.anchor = nil
-            self:SetParent(UIParent)
-        end)
-    end
-    if presetDropdown:IsShown() and presetDropdown.anchor == anchor then
-        presetDropdown:Hide()
-        return
-    end
-    presetDropdown.anchor = anchor
-    presetDropdown:SetParent(anchor:GetParent())
-    presetDropdown:ClearAllPoints()
-    presetDropdown:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -4)
-    local width = math.max(anchor:GetWidth() + 40, 200)
-    presetDropdown:SetWidth(width)
-    for i, opt in ipairs(options) do
-        local btn = presetButtons[i]
-        if not btn then
-            btn = CreateFrame("Button", nil, presetDropdown)
-            presetButtons[i] = btn
-            btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            btn.text:SetAllPoints()
-            btn.text:SetJustifyH("LEFT")
-        end
-        btn:SetSize(width - 8, 18)
-        btn:ClearAllPoints()
-        btn:SetPoint("TOPLEFT", 4, -4 - (i - 1) * 20)
-        btn.text:SetText("  " .. opt.label)
-        btn.text:SetTextColor(1, 1, 1)
-        btn:SetScript("OnEnter", function() btn.text:SetTextColor(1, 0.82, 0) end)
-        btn:SetScript("OnLeave", function() btn.text:SetTextColor(1, 1, 1) end)
-        btn:SetScript("OnClick", function()
-            onSelect(i)
-            presetDropdown:Hide()
-        end)
-        btn:Show()
-    end
-    for i = #options + 1, #presetButtons do
-        presetButtons[i]:Hide()
-    end
-    presetDropdown:SetHeight(#options * 20 + 8)
-    presetDropdown:SetParent(anchor:GetParent())
-    presetDropdown:SetFrameStrata("TOOLTIP")
-    presetDropdown:Show()
-end
-local SOUND_LIST = {
-    { name = "Sound1", id = SK("AUCTION_WINDOW_OPEN",            3087)  },
-    { name = "Sound2", id = SK("PVP_THROUGH_QUEUE_READY_CHECK", 12867)  },
+local SOUND_PRESETS = {
+    { label = "Disabled", id = nil },
+    { label = "Auction Bell", id = SK("AUCTION_WINDOW_OPEN", 3087) },
+    { label = "Bell - Alarm 2", id = SK("ALARM_CLOCK_WARNING_2", 12890) },
+    { label = "Chime - Ready", id = SK("READY_CHECK", 8960) },
 }
 
-------------------------------------------------------------
--- State
-------------------------------------------------------------
+-- True dropdown-style control (Blizzard template) for preset lists
+local function CreatePresetDropdownControl(parent, name, x, y, width, options, getSelectedIndex, onSelect, prefix)
+    local dd = CreateFrame("Frame", name, parent, "UIDropDownMenuTemplate")
+    dd:SetPoint("TOPLEFT", parent, "TOPLEFT", x - 16, y + 8)
+    UIDropDownMenu_SetWidth(dd, width)
+    UIDropDownMenu_JustifyText(dd, "LEFT")
+
+    UIDropDownMenu_Initialize(dd, function(self, level)
+        local current = getSelectedIndex and getSelectedIndex() or 1
+        for i, opt in ipairs(options) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = opt.label
+            info.checked = (i == current)
+            info.func = function()
+                onSelect(i)
+                UIDropDownMenu_SetSelectedID(dd, i)
+                local chosen = (options[i] and options[i].label) or "?"
+                UIDropDownMenu_SetText(dd, (prefix or "") .. chosen)
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end)
+
+    local function Refresh()
+        local idx = getSelectedIndex and getSelectedIndex() or 1
+        UIDropDownMenu_SetSelectedID(dd, idx)
+        local chosen = (options[idx] and options[idx].label) or "?"
+        UIDropDownMenu_SetText(dd, (prefix or "") .. chosen)
+    end
+
+    Refresh()
+    return dd, Refresh
+end
+
 local db
 local myClass, myName, mySpellID
 local myCachedCD
@@ -223,7 +201,7 @@ local loxxCurrentRun  = nil   -- stats: current instance run
 local statsFrame      = nil   -- stats window
 local rotationPanel   = nil   -- rotation management panel
 local rotationOrder   = {}    -- array of player names (ordered)
-local ROTATION_MAINTENANCE = true  -- true = section Kick Rotation grisée, clics désactivés
+local ROTATION_MAINTENANCE = true  -- true = Kick Rotation section disabled (greyed out, clicks blocked)
 local rotationIndex   = 1     -- current player's turn (1-based)
 -- Error log (in-memory, also persisted via SavedVars)
 local loxxErrorLog = {}
@@ -1232,7 +1210,7 @@ local function UpdateDisplay()
         else
             bar.cdBar:SetMinMaxValues(0, 1)
             bar.cdBar:SetValue(1)
-            bar.cdBar:SetStatusBarColor(col[1], col[2], col[3], 0.35)
+            bar.cdBar:SetStatusBarColor(col[1], col[2], col[3], 0.85)
             bar.partyCdText:SetFont(FONT_FACE, bar.readyFontSz, FONT_FLAGS)
             bar.partyCdText:SetText(db.showReady and "READY" or "")
             bar.partyCdText:SetTextColor(unpack(FONT_READY_COLOR))
@@ -1279,7 +1257,7 @@ local function UpdateDisplay()
             bar.partyCdText:SetTextColor(unpack(FONT_READY_COLOR))
             bar.cdBar:SetMinMaxValues(0, 1)
             bar.cdBar:SetValue(1)
-            bar.cdBar:SetStatusBarColor(col[1], col[2], col[3], 0.35)
+            bar.cdBar:SetStatusBarColor(col[1], col[2], col[3], 0.85)
             bar.ttRem = 0
         end
         -- Rotation highlight for self bar
@@ -1326,7 +1304,7 @@ local function UpdateDisplay()
                 bar.partyCdText:SetTextColor(unpack(FONT_READY_COLOR))
                 bar.cdBar:SetMinMaxValues(0, 1)
                 bar.cdBar:SetValue(1)
-                bar.cdBar:SetStatusBarColor(col[1], col[2], col[3], 0.35)
+                bar.cdBar:SetStatusBarColor(col[1], col[2], col[3], 0.85)
                 bar.ttRem = 0
             end
             barIdx = barIdx + 1
@@ -1424,7 +1402,7 @@ local function UpdateDisplay()
 
     local numVisible = barIdx - 1
 
-    -- Afficher "No kick available" quand la fenêtre est vide (healer, etc.)
+    -- Show "No kick available" label when the window is empty (healer-only groups, etc.)
     if mainFrame.noKickLabel then
         if numVisible == 0 then
             mainFrame.noKickLabel:Show()
@@ -1433,7 +1411,7 @@ local function UpdateDisplay()
         end
     end
 
-    -- ── Ligne "prochaine dispo globale" — optionnelle ─────────────────────
+    -- ── Optional "next global availability" strip ─────────────────────
     local alertH = 0
     if mainFrame.alertBand then
         if numVisible == 0 or db.showKicksReadyBar == false then
@@ -1923,7 +1901,7 @@ local function ShowChangelogWindow()
 
     -- ScrollFrame
     local scroll = CreateFrame("ScrollFrame", nil, changelogFrame, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 16, -80)
+    scroll:SetPoint("TOPLEFT", 16, -100)
     scroll:SetPoint("BOTTOMRIGHT", -32, 40)
 
     local content = CreateFrame("Frame", nil, scroll)
@@ -1937,8 +1915,8 @@ local function ShowChangelogWindow()
     txt:SetJustifyV("TOP")
     txt:SetWordWrap(true)
     txt:SetNonSpaceWrap(false)
-    txt:SetFont(FONT_FACE, 12, FONT_FLAGS)
-    txt:SetText(LOXX_CHANGELOG or "Aucun changelog disponible.")
+    txt:SetFont(FONT_FACE, 10, FONT_FLAGS)
+    txt:SetText(LOXX_CHANGELOG or "No changelog available.")
 
     -- Hauteur du contenu pour le scroll (estimation par lignes)
     local lineHeight = 18
@@ -2130,7 +2108,7 @@ local function CreateConfigPanel()
 
     -- FONT SIZES
     yL = yL - 48
-    SectionLabelL("APPARENCE", yL)
+    SectionLabelL("APPEARANCE", yL)
     yL = yL - 28
     local initNameFont = math.max(2, db.nameFontSize or 12)
     local nameSlider = MakeSlider("LOXX_Slider_nameFont", configFrame)
@@ -2173,7 +2151,7 @@ local function CreateConfigPanel()
     local initReadyFont = math.max(2, db.readyTextSize or 12)
     local readySlider = MakeSlider("LOXX_Slider_readyFont", configFrame)
     readySlider:SetPoint("TOPLEFT", SL_XL, yL)
-    readySlider:SetSize(SL_W, 28)
+    readySlider:SetSize(SL_W, 26)
     readySlider:SetMinMaxValues(2, 32)
     readySlider:SetValueStep(1)
     readySlider:SetObeyStepOnDrag(true)
@@ -2188,55 +2166,54 @@ local function CreateConfigPanel()
         RebuildBars()
     end)
 
-    yL = yL - 36
-    local fontDrop = CreateFrame("Button", nil, configFrame, "UIPanelButtonTemplate")
-    fontDrop:SetSize(SL_W, 24)
-    fontDrop:SetPoint("TOPLEFT", SL_XL, yL)
-    local function RefreshFontLabel()
-        fontDrop:SetText("Police: " .. FONT_PRESETS[db.fontPreset or 1].label)
-    end
-    fontDrop:SetScript("OnClick", function()
-        ShowPresetDropdown(fontDrop, FONT_PRESETS, function(i)
+    local PRESET_DROPDOWN_W = 160
+
+    yL = yL - 52
+    local _, RefreshFontLabel = CreatePresetDropdownControl(
+        configFrame,
+        "LOXX_FontPresetDropDown",
+        SL_XL, yL, PRESET_DROPDOWN_W,
+        FONT_PRESETS,
+        function() return db.fontPreset or 1 end,
+        function(i)
             db.fontPreset = i
             ApplyFontPreset()
             RebuildBars()
-            RefreshFontLabel()
-        end)
-    end)
+        end,
+        "Font: "
+    )
     RefreshFontLabel()
 
-    yL = yL - 34
-    local colorDrop = CreateFrame("Button", nil, configFrame, "UIPanelButtonTemplate")
-    colorDrop:SetSize(SL_W, 24)
-    colorDrop:SetPoint("TOPLEFT", SL_XL, yL)
-    local function RefreshColorLabel()
-        colorDrop:SetText("Couleur: " .. FONT_COLOR_PRESETS[db.fontColorPreset or 1].label)
-    end
-    colorDrop:SetScript("OnClick", function()
-        ShowPresetDropdown(colorDrop, FONT_COLOR_PRESETS, function(i)
+    yL = yL - 40
+    local _, RefreshColorLabel = CreatePresetDropdownControl(
+        configFrame,
+        "LOXX_FontColorDropDown",
+        SL_XL, yL, PRESET_DROPDOWN_W,
+        FONT_COLOR_PRESETS,
+        function() return db.fontColorPreset or 1 end,
+        function(i)
             db.fontColorPreset = i
             ApplyFontPreset()
             RebuildBars()
-            RefreshColorLabel()
-        end)
-    end)
+        end,
+        "Color: "
+    )
     RefreshColorLabel()
 
-    yL = yL - 34
-    local texDrop = CreateFrame("Button", nil, configFrame, "UIPanelButtonTemplate")
-    texDrop:SetSize(SL_W, 24)
-    texDrop:SetPoint("TOPLEFT", SL_XL, yL)
-    local function RefreshTextureLabel()
-        texDrop:SetText("Barres: " .. BAR_TEXTURE_PRESETS[db.barTexturePreset or 1].label)
-    end
-    texDrop:SetScript("OnClick", function()
-        ShowPresetDropdown(texDrop, BAR_TEXTURE_PRESETS, function(i)
+    yL = yL - 40
+    local _, RefreshTextureLabel = CreatePresetDropdownControl(
+        configFrame,
+        "LOXX_BarTextureDropDown",
+        SL_XL, yL, PRESET_DROPDOWN_W,
+        BAR_TEXTURE_PRESETS,
+        function() return db.barTexturePreset or 1 end,
+        function(i)
             db.barTexturePreset = i
             ApplyTexturePreset()
             RebuildBars()
-            RefreshTextureLabel()
-        end)
-    end)
+        end,
+        "Bar Texture: "
+    )
     RefreshTextureLabel()
 
     -- ── RIGHT COLUMN ─────────────────────────────────────────────
@@ -2264,57 +2241,34 @@ local function CreateConfigPanel()
     yR = yR - 48
     SectionLabelR("SOUND", yR)
     yR = yR - 30
-    local soundOptions = { { name = "None", id = nil } }
-    for _, s in ipairs(SOUND_LIST) do soundOptions[#soundOptions+1] = s end
-    local function getSoundOptIdx()
-        if not db.soundOnReady then return 1 end
-        for i = 2, #soundOptions do
-            if soundOptions[i].id == db.soundID then return i end
+    local function GetSoundPresetIndex()
+        if not db.soundOnReady or not db.soundID then return 1 end
+        for i = 2, #SOUND_PRESETS do
+            if SOUND_PRESETS[i].id == db.soundID then return i end
         end
         return 2
     end
 
-    local sndDropBtn = CreateFrame("Button", nil, configFrame, "UIPanelButtonTemplate")
-    sndDropBtn:SetSize(160, 24)
-    sndDropBtn:SetPoint("TOPLEFT", R_CBX1, yR)
-    sndDropBtn:SetText(soundOptions[getSoundOptIdx()].name .. "  v")
-
-    local sndPopup = CreateFrame("Frame", nil, configFrame)
-    sndPopup:SetFrameStrata("TOOLTIP")
-    sndPopup:SetSize(160, #soundOptions * 22 + 8)
-    sndPopup:SetPoint("TOPLEFT", sndDropBtn, "BOTTOMLEFT", 0, -2)
-    sndPopup:Hide()
-    local popBg = sndPopup:CreateTexture(nil, "BACKGROUND")
-    popBg:SetAllPoints() ; popBg:SetTexture(FLAT_TEX) ; popBg:SetVertexColor(0.08, 0.08, 0.08, 0.97)
-    local popBd = sndPopup:CreateTexture(nil, "BORDER")
-    popBd:SetPoint("TOPLEFT", -1, 1) ; popBd:SetPoint("BOTTOMRIGHT", 1, -1)
-    popBd:SetTexture(FLAT_TEX) ; popBd:SetVertexColor(0.45, 0.38, 0.22, 0.9)
-    for i, opt in ipairs(soundOptions) do
-        local row = CreateFrame("Button", nil, sndPopup)
-        row:SetSize(136, 20)
-        row:SetPoint("TOPLEFT", 2, -4 - (i - 1) * 22)
-        local txt = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        txt:SetAllPoints() ; txt:SetJustifyH("LEFT") ; txt:SetText("  " .. opt.name)
-        row:SetScript("OnEnter", function() txt:SetTextColor(1, 0.82, 0) end)
-        row:SetScript("OnLeave", function() txt:SetTextColor(1, 1, 1) end)
-        local optIdx = i
-        row:SetScript("OnClick", function()
-            local o = soundOptions[optIdx]
-            if o.id then
+    local _, RefreshSoundLabel = CreatePresetDropdownControl(
+        configFrame,
+        "LOXX_SoundPresetDropDown",
+        R_CBX1, yR, PRESET_DROPDOWN_W,
+        SOUND_PRESETS,
+        GetSoundPresetIndex,
+        function(i)
+            local chosen = SOUND_PRESETS[i]
+            if chosen and chosen.id then
                 db.soundOnReady = true
-                db.soundID = o.id
-                PlaySound(o.id, "Master")
+                db.soundID = chosen.id
+                PlaySound(chosen.id, "Master")
             else
                 db.soundOnReady = false
                 db.soundID = nil
             end
-            sndDropBtn:SetText(o.name .. "  v")
-            sndPopup:Hide()
-        end)
-    end
-    sndDropBtn:SetScript("OnClick", function()
-        if sndPopup:IsShown() then sndPopup:Hide() else sndPopup:Show() end
-    end)
+        end,
+        "Sound: "
+    )
+    RefreshSoundLabel()
 
     -- UI
     yR = yR - 48
@@ -2347,7 +2301,7 @@ local function CreateConfigPanel()
         ShowRotationPanel()
     end)
 
-    -- Overlay "maintenance" sur la section ROTATION
+    -- Maintenance overlay for the ROTATION section
     if ROTATION_MAINTENANCE then
         rotCb:Disable()
         mgrBtn:Disable()
@@ -2366,20 +2320,37 @@ local function CreateConfigPanel()
     end
 
     -- ── FOOTER ───────────────────────────────────────────────────
-    local buttonColumn = CreateFrame("Frame", nil, configFrame)
-    buttonColumn:SetPoint("BOTTOMRIGHT", configFrame, "BOTTOMRIGHT", -PADDING, 96)
-    buttonColumn:SetSize(160, 120)
-    local BUTTON_SPACING = 10
+    local footerBand = CreateFrame("Frame", nil, configFrame)
+    footerBand:SetHeight(78)
+    footerBand:SetPoint("BOTTOMLEFT", configFrame, "BOTTOMLEFT", 0, 0)
+    footerBand:SetPoint("BOTTOMRIGHT", configFrame, "BOTTOMRIGHT", 0, 0)
+    footerBand:SetFrameLevel(configFrame:GetFrameLevel() + 2)
 
-    local changelogBtn = CreateFrame("Button", nil, buttonColumn, "UIPanelButtonTemplate")
-    changelogBtn:SetSize(120, 24)
-    changelogBtn:SetPoint("BOTTOMRIGHT", buttonColumn, "BOTTOMRIGHT", 0, 0)
+    local footerBg = footerBand:CreateTexture(nil, "BACKGROUND")
+    footerBg:SetAllPoints()
+    footerBg:SetTexture(FLAT_TEX)
+    footerBg:SetVertexColor(0.06, 0.05, 0.03, 0.97)
+
+    local footerSep = footerBand:CreateTexture(nil, "BORDER")
+    footerSep:SetTexture(FLAT_TEX)
+    footerSep:SetVertexColor(0.45, 0.38, 0.22, 0.55)
+    footerSep:SetPoint("TOPLEFT", footerBand, "TOPLEFT", 8, 0)
+    footerSep:SetPoint("TOPRIGHT", footerBand, "TOPRIGHT", -8, 0)
+    footerSep:SetHeight(1)
+
+    local footerButtons = CreateFrame("Frame", nil, footerBand)
+    footerButtons:SetSize(470, 28)
+    footerButtons:SetPoint("TOPRIGHT", footerBand, "TOPRIGHT", -14, -10)
+
+    local changelogBtn = CreateFrame("Button", nil, footerButtons, "UIPanelButtonTemplate")
+    changelogBtn:SetSize(110, 24)
+    changelogBtn:SetPoint("RIGHT", footerButtons, "RIGHT", 0, 0)
     changelogBtn:SetText("Changelog")
     changelogBtn:SetScript("OnClick", function() ShowChangelogWindow() end)
 
-    local savePosBtn = CreateFrame("Button", nil, buttonColumn, "UIPanelButtonTemplate")
+    local savePosBtn = CreateFrame("Button", nil, footerButtons, "UIPanelButtonTemplate")
     savePosBtn:SetSize(120, 24)
-    savePosBtn:SetPoint("BOTTOMRIGHT", changelogBtn, "TOPRIGHT", 0, BUTTON_SPACING)
+    savePosBtn:SetPoint("RIGHT", changelogBtn, "LEFT", -10, 0)
     savePosBtn:SetText("Save Position")
     savePosBtn:SetScript("OnClick", function()
         local function toChat(msg)
@@ -2394,46 +2365,51 @@ local function CreateConfigPanel()
         end
         local ok, err = pcall(function()
             if not mainFrame then
-                toChat("|cFF00DDDD[LOXX]|r Aucune fenêtre à sauvegarder.")
+                toChat("|cFF00DDDD[LOXX]|r No frame available to save.")
                 return
             end
             if LoxxSaveFramePosition(mainFrame) then
-                toChat("|cFF00DDDD[LOXX]|r |cFF44FF44Position sauvegardée !|r")
-                toCenter("LOXX: Position sauvegardee !")
+                toChat("|cFF00DDDD[LOXX]|r |cFF44FF44Position saved!|r")
+                toCenter("LOXX: Position saved!")
             else
-                toChat("|cFF00DDDD[LOXX]|r Fenêtre masquée, impossible de sauvegarder.")
+                toChat("|cFF00DDDD[LOXX]|r Frame hidden, cannot save position.")
             end
         end)
         if not ok and err then
-            toChat("|cFFFF4444[LOXX]|r Erreur: " .. tostring(err))
+            toChat("|cFFFF4444[LOXX]|r Error: " .. tostring(err))
         end
     end)
 
     -- Run Stats button (gold, like other buttons)
-    local statsBtn = CreateFrame("Button", nil, buttonColumn, "UIPanelButtonTemplate")
+    local statsBtn = CreateFrame("Button", nil, footerButtons, "UIPanelButtonTemplate")
     statsBtn:SetSize(120, 24)
-    statsBtn:SetPoint("BOTTOMRIGHT", savePosBtn, "TOPRIGHT", 0, BUTTON_SPACING)
+    statsBtn:SetPoint("RIGHT", savePosBtn, "LEFT", -10, 0)
     statsBtn:SetText("Run Stats")
     if statsBtn.GetFontString and statsBtn:GetFontString() then
         statsBtn:GetFontString():SetTextColor(1, 0.82, 0)
     end
     statsBtn:SetScript("OnClick", function() ShowStatsWindow() end)
 
-    -- Zone protégée en bas : message + version (collés au fond, séparés du reste)
-    local footerBand = CreateFrame("Frame", nil, configFrame)
-    footerBand:SetHeight(52)
-    footerBand:SetPoint("BOTTOMLEFT", configFrame, "BOTTOMLEFT", 0, 0)
-    footerBand:SetPoint("BOTTOMRIGHT", configFrame, "BOTTOMRIGHT", 0, 0)
-    footerBand:SetFrameLevel(configFrame:GetFrameLevel() + 2)
-    local footerBg = footerBand:CreateTexture(nil, "BACKGROUND")
-    footerBg:SetAllPoints()
-    footerBg:SetTexture(FLAT_TEX)
-    footerBg:SetVertexColor(0.06, 0.05, 0.03, 0.95)
+    local commandsBtn = CreateFrame("Button", nil, footerButtons, "UIPanelButtonTemplate")
+    commandsBtn:SetSize(110, 24)
+    commandsBtn:SetPoint("RIGHT", statsBtn, "LEFT", -10, 0)
+    commandsBtn:SetText("Commands")
+    commandsBtn:SetScript("OnClick", function()
+        if SlashCmdList and SlashCmdList["LOXX"] then
+            SlashCmdList["LOXX"]("help")
+        else
+            print("|cFF00DDDD[LOXX]|r /loxx help")
+        end
+    end)
+
     local footerMsg = footerBand:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    footerMsg:SetPoint("BOTTOM", footerBand, "BOTTOM", 0, 14)
-    footerMsg:SetText("Keep interrupts sharp – stay ahead of the pull.")
+    footerMsg:SetPoint("BOTTOMLEFT", footerBand, "BOTTOMLEFT", 14, 10)
+    footerMsg:SetJustifyH("LEFT")
+    footerMsg:SetText("Thanks to my favorite haters who pushed me to continue this addon  #FUALL")
+
     local footerVer = footerBand:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    footerVer:SetPoint("BOTTOM", footerBand, "BOTTOM", 0, 4)
+    footerVer:SetPoint("BOTTOMRIGHT", footerBand, "BOTTOMRIGHT", -14, 10)
+    footerVer:SetJustifyH("RIGHT")
     footerVer:SetText("|cFF888888v" .. LOXX_VERSION .. "|r")
 
     configFrame:Show()
@@ -2521,7 +2497,7 @@ local function CreateUI()
     alertBand.label = alertLabel
     mainFrame.alertBand = alertBand
 
-    -- "No kick available" quand la fenêtre est vide (ex: healer sans interrupt)
+    -- "No kick available" label when the window is empty (e.g., healer without interrupt)
     local noKickLabel = mainFrame:CreateFontString(nil, "OVERLAY")
     noKickLabel:SetFont(FONT_FACE, 12, FONT_FLAGS)
     noKickLabel:SetTextColor(unpack(FONT_COLOR))
@@ -2676,7 +2652,7 @@ local function SetupSlash()
             if LOXXSavedVars then LOXXSavedVars.loxxErrorLog = {} end
             print("|cFF00DDDD[LOXX]|r Error log cleared.")
         elseif cmd == "help" then
-            print("|cFF00DDDD[LOXX]|r /loxx (options) | show | hide | lock | unlock | test | spy | pos | debug | stats | logs | logs clear")
+            print("|cFF00DDDD[LOXX]|r /loxx, /loxx config|options|settings, show, hide, lock, unlock, test, stats, logs, logs clear, ping, spy, pos, debug, help")
         else
             -- Default: open config
             CreateConfigPanel()
@@ -2731,8 +2707,8 @@ BroadcastRotation = function()
     SendLOXX("ROT:" .. table.concat(rotationOrder, ",") .. ":" .. rotationIndex)
 end
 
-------------------------------------------------------------
--- Stats window (same design as Changelog, collée à gauche de Settings)
+-------------------------------------------------------------
+-- Stats window (same design as Changelog, attached to the left of Settings)
 ------------------------------------------------------------
 ShowStatsWindow = function()
     if statsFrame and statsFrame:IsShown() then
@@ -2759,7 +2735,7 @@ ShowStatsWindow = function()
     sf:SetFrameStrata("DIALOG")
     if sf.TitleText then sf.TitleText:SetText("") end
 
-    -- Header (même design que Changelog)
+    -- Header (same styling as the Changelog frame)
     local hdr = sf:CreateTexture(nil, "BACKGROUND", nil, 2)
     hdr:SetTexture(FLAT_TEX)
     hdr:SetVertexColor(0.12, 0.09, 0.02, 1)
@@ -2786,7 +2762,7 @@ ShowStatsWindow = function()
     hdrTitle:SetJustifyH("CENTER")
     hdrTitle:SetText("|cFFFFD100Interrupt Statistics|r")
 
-    -- ScrollFrame (même layout que Changelog)
+    -- ScrollFrame (mirrors the Changelog layout)
     local scroll = CreateFrame("ScrollFrame", nil, sf, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 16, -80)
     scroll:SetPoint("BOTTOMRIGHT", -32, 40)
@@ -2818,14 +2794,22 @@ ShowStatsWindow = function()
         return t
     end
 
+    local renderedSomething = false
+
     -- Current run
-    if loxxCurrentRun and next(loxxCurrentRun.players) then
+    if loxxCurrentRun then
+        renderedSomething = true
         AddLine("|cFF00DDDDCurrent Run|r", 0, "GameFontNormal") ; y = y - 18
-        local keyStr = loxxCurrentRun.keyLevel > 0 and (" [+" .. loxxCurrentRun.keyLevel .. "]") or ""
+        local keyStr = loxxCurrentRun.keyLevel and loxxCurrentRun.keyLevel > 0 and (" [+" .. loxxCurrentRun.keyLevel .. "]") or ""
         AddLine("|cFFFFD100" .. (loxxCurrentRun.dungeon or "?") .. keyStr .. "|r  " .. (loxxCurrentRun.date or ""), 0)
         y = y - 16
-        for _, row in ipairs(SortedPlayers(loxxCurrentRun.players)) do
-            AddLine("  " .. row.name .. " — " .. row.kicks .. " kick" .. (row.kicks ~= 1 and "s" or ""), 8)
+        if loxxCurrentRun.players and next(loxxCurrentRun.players) then
+            for _, row in ipairs(SortedPlayers(loxxCurrentRun.players)) do
+                AddLine("  " .. row.name .. " — " .. row.kicks .. " kick" .. (row.kicks ~= 1 and "s" or ""), 8)
+                y = y - 14
+            end
+        else
+            AddLine("|cFF888888No interrupts recorded yet in this run.|r", 8)
             y = y - 14
         end
         y = y - 8
@@ -2834,6 +2818,7 @@ ShowStatsWindow = function()
     -- History
     local runs = LOXXSavedVars.loxxRunHistory or {}
     if #runs > 0 then
+        renderedSomething = true
         AddSep()
         AddLine("|cFFFFD100History|r", 0, "GameFontNormal") ; y = y - 20
         for i, run in ipairs(runs) do
@@ -2859,7 +2844,16 @@ ShowStatsWindow = function()
         end
     end
 
-    content:SetHeight(math.abs(y) + 20)
+    if not renderedSomething then
+        AddLine("|cFFFFD100No stats yet|r", 0, "GameFontNormal")
+        y = y - 20
+        AddLine("|cFFBBBBBBStart a dungeon/arena and interrupt casts to record data.|r", 0)
+        y = y - 16
+        AddLine("|cFF888888Tip: use /loxx test to quickly validate display behavior.|r", 0)
+        y = y - 14
+    end
+
+    content:SetHeight(math.max(120, math.abs(y) + 20))
 
     sf:Show()
 end
@@ -2948,7 +2942,7 @@ ShowRotationPanel = function()
         rotationPanel:SetClampedToScreen(true)
         rotationPanel:SetFrameStrata("DIALOG")
 
-        -- Header (même design que Changelog)
+        -- Header (same styling as the Changelog frame)
         local hdr = rotationPanel:CreateTexture(nil, "BACKGROUND", nil, 2)
         hdr:SetTexture(FLAT_TEX)
         hdr:SetVertexColor(0.12, 0.09, 0.02, 1)
@@ -3146,7 +3140,7 @@ local function Initialize()
     LOXXSavedVars.db = LOXXSavedVars.db or {}
     db = LOXXSavedVars.db
 
-    -- Migration: anciennes données en racine → .db
+    -- Migration: move legacy root-level data into db table
     for k, v in pairs(DEFAULTS) do
         if LOXXSavedVars[k] ~= nil and db[k] == nil then
             db[k] = LOXXSavedVars[k]
