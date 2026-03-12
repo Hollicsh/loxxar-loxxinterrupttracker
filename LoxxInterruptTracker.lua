@@ -15,7 +15,7 @@
 
 local ADDON_NAME = "LoxxInterruptTracker"
 local MSG_PREFIX = "LOXX"
-local LOXX_VERSION = "1.2.5"
+local LOXX_VERSION = "1.2.5.1"
 local LOXX_DB_VERSION = 4   -- bump when SavedVars schema changes
 
 ------------------------------------------------------------
@@ -41,18 +41,6 @@ local ALL_INTERRUPTS = {
     [1276467] = { name = "Fel Ravager",      cd = 25, icon = "Interface\\Icons\\spell_shadow_summonfelhunter" },
     [351338] = { name = "Quell",             cd = 20, icon = 4622469 },
 }
-
-local function GetClassKickInfo(cls, unit)
-    local info = CLASS_INTERRUPTS[cls]
-    if not info then return nil end
-    if cls == "SHAMAN" and unit then
-        local role = UnitGroupRolesAssigned(unit)
-        if role == "HEALER" then
-            return SPEC_INTERRUPT_OVERRIDES[264] or info
-        end
-    end
-    return info
-end
 
 -- Which spells to check per class (order matters: first found wins)
 local CLASS_INTERRUPT_LIST = {
@@ -200,6 +188,18 @@ local SPEC_INTERRUPT_OVERRIDES = {
     [264]  = { id = 57994,   cd = 30, name = "Wind Shear" },      -- Restoration Shaman (30s vs 12s for Ele/Enh)
     [266]  = { id = 119914,  cd = 30, name = "Axe Toss", isPet = true, petSpellID = 89766 },  -- Demonology Warlock (Felguard)
 }
+
+local function GetClassKickInfo(cls, unit)
+    local info = CLASS_INTERRUPTS[cls]
+    if not info then return nil end
+    if cls == "SHAMAN" and unit then
+        local role = UnitGroupRolesAssigned(unit)
+        if role == "HEALER" then
+            return SPEC_INTERRUPT_OVERRIDES[264] or info
+        end
+    end
+    return info
+end
 
 -- Specs that have NO interrupt (remove from tracker after inspect)
 -- Be conservative: only list specs we're SURE have no interrupt
