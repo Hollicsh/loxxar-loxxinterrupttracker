@@ -4,35 +4,37 @@
 ]]
 
 LOXX_CHANGELOG = [[
+|cFFFFD100v1.2.4.9|r
+• UI_CLEAN_FIXBUG
+• STABILITY_TOUCHUPS
+
 |cFFFFD100v1.2.4.8|r
-• Config: retrait des lignes dorées de bas de page
-• Config: boutons alignés verticalement en bas à droite
-• Config: footer nettoyé (plus de séparateur)
+• UI_FLOW_IMPROVED
+• GENERAL_POLISH
 
 |cFFFFD100v1.2.4.7|r
-• Config: footer band protégé en bas (message + version)
-• Config: boutons Run Stats / Save Position / Changelog repositionnés
-• Config: séparateur abaissé (espace avec Ready Size)
+• MENU_TWEAKS
+• VISUAL_ADJUSTMENTS
 
 |cFFFFD100v1.2.4.6|r
-• Config window: increased height for full footer visibility
+• DISPLAY_REFINEMENT
 
 |cFFFFD100v1.2.4.5|r
-• Config footer: more bottom spacing
+• FOOTER_TWEAKS
 
 |cFFFFD100v1.2.4.4|r
-• Option to hide "X kicks ready" bar (Settings / /loxx)
+• READY_BAR_OPTION
 
 |cFFFFD100v1.2.4.3|r
-• Kick Rotation: section maintenance – removed gray bar, "Under Maintenance" label
+• ROTATION_SECTION_REFRESH
 
 |cFFFFD100v1.2.4|r
-• Save Position button to save the interrupt window location
-• Kick Rotation: manage order, sync with party, visual highlight (yellow border) on current player's turn
+• POSITION_CONTROL
+• ROTATION_SYNC
 
 |cFFFFD100v1.2.3|r
-• Alert band now counts extra kicks (e.g. Warlock Fel Ravager)
+• ALERT_REFRESH
 
 |cFFFFD100v1.2.2|r
-• WoW Midnight 12.0.x support (The War Within)
+• MIDNIGHT_SUPPORT
 ]]

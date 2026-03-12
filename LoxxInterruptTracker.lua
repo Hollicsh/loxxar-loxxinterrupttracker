@@ -15,7 +15,7 @@
 
 local ADDON_NAME = "LoxxInterruptTracker"
 local MSG_PREFIX = "LOXX"
-local LOXX_VERSION = "1.2.4.8"
+local LOXX_VERSION = "1.2.4.9"
 local LOXX_DB_VERSION = 4   -- bump when SavedVars schema changes
 
 ------------------------------------------------------------
