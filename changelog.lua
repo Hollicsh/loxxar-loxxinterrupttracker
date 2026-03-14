@@ -4,9 +4,17 @@
 ]]
 
 LOXX_CHANGELOG = [[
+|cFFFFD100v1.3.1|r
+• Fixed party member interrupt cooldowns not updating after kicks
+• Fixed duplicate kick detection when nameplate and target fire simultaneously
+• Added dungeon log system: /loxx record, /loxx record show, /loxx record clear
+• Added localization for 4 new languages: Korean, Japanese, Chinese Simplified, Chinese Traditional
+• Addon now supports 10 client languages
+• Removed Kick Rotation Manager — feature replaced by core interrupt tracking
+
 |cFFFFD100v1.3.0|r
 • Full localization support: English, Français, Deutsch, Italiano, Español
-• All UI strings — tracker, settings, stats, rotation panel — adapt to the client language
+• All UI strings — tracker, settings, stats — adapt to the client language
 • Escape key now closes the Settings window
 • Stats and Changelog windows close automatically when Settings closes
 

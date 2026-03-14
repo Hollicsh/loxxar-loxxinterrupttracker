@@ -15,7 +15,7 @@
 
 local ADDON_NAME = "LoxxInterruptTracker"
 local MSG_PREFIX = "LOXX"
-local LOXX_VERSION = "1.3.0"
+local LOXX_VERSION = "1.3.1"
 local LOXX_DB_VERSION = 4   -- bump when SavedVars schema changes
 local L = LoxxL or {}       -- localization table (set by localization.lua)
 
@@ -117,7 +117,6 @@ local DEFAULTS = {
     soundID         = 8960,
     showTooltip     = true,
     hideOutOfCombat = false,
-    rotationEnabled = false,
     showKicksReadyBar = true,
     fontPreset      = 1,
     fontColorPreset = 1,
@@ -196,18 +195,16 @@ local testMode = false
 local testTicker = nil
 local inCombat = false
 local spyMode = false
--- Forward declarations: defined later in the stats/rotation block but called earlier
+-- Forward declarations: defined later in the stats block but called earlier
 local RecordKick
-local AdvanceRotation
-local BroadcastRotation
 local loxxCurrentRun  = nil   -- stats: current instance run
 local statsFrame      = nil   -- stats window
-local rotationPanel   = nil   -- rotation management panel
-local rotationOrder   = {}    -- array of player names (ordered)
-local ROTATION_MAINTENANCE = true  -- true = Kick Rotation section disabled (greyed out, clicks blocked)
-local rotationIndex   = 1     -- current player's turn (1-based)
 -- Error log (in-memory, also persisted via SavedVars)
 local loxxErrorLog = {}
+local loxxDungeonLog = {}
+local loxxDungeonLogActive = false
+local DUNGEON_LOG_MAX = 600
+local dungeonLogFrame = nil
 local loxxLastErr  = ""
 local loxxErrCount = 0
 
@@ -375,6 +372,19 @@ local function SetDisplayDirty()
 end
 
 ------------------------------------------------------------
+-- Dungeon logger — /loxx record  (independent of spy mode)
+------------------------------------------------------------
+local function DLog(cat, msg)
+    if not loxxDungeonLogActive then return end
+    local t = date("%H:%M:%S")
+    local entry = "[" .. t .. "][" .. cat .. "] " .. tostring(msg)
+    table.insert(loxxDungeonLog, entry)
+    if #loxxDungeonLog > DUNGEON_LOG_MAX then
+        table.remove(loxxDungeonLog, 1)
+    end
+end
+
+------------------------------------------------------------
 -- ElvUI detection
 ------------------------------------------------------------
 local function ApplyFontPreset()
@@ -506,28 +516,9 @@ local function OnAddonMessage(prefix, message, channel, sender)
         local cd = tonumber(parts[2])
         if cd and cd > 0 and partyAddonUsers[shortName] then
             partyAddonUsers[shortName].cdEnd = GetTime() + cd
-            partyAddonUsers[shortName].baseCd = cd
+            -- Do NOT overwrite baseCd here: baseCd is set by JOIN from spell tables
+            -- and must stay stable. CAST only updates cdEnd.
             RecordKick(shortName)
-        end
-    elseif command == "ROT" then
-        -- ROT:player1,player2,...:index
-        local playersPart = parts[2]
-        local idxPart = tonumber(parts[3])
-        if playersPart and idxPart then
-            local names = {}
-            for n in playersPart:gmatch("[^,]+") do names[#names+1] = n end
-            rotationOrder = names
-            rotationIndex = math.max(1, math.min(idxPart, #names))
-            if LOXXSavedVars then
-                LOXXSavedVars.rotationOrder = rotationOrder
-                LOXXSavedVars.rotationIndex = rotationIndex
-            end
-        end
-    elseif command == "ROT_IDX" then
-        local idx = tonumber(parts[2])
-        if idx and #rotationOrder > 0 then
-            rotationIndex = math.max(1, math.min(idx, #rotationOrder))
-            if LOXXSavedVars then LOXXSavedVars.rotationIndex = rotationIndex end
         end
     end
 end
@@ -588,6 +579,7 @@ local function OnSpellCastSucceeded(unit, castGUID, spellID, isParty, cleanName)
                     local baseCd = info.baseCd or (ALL_INTERRUPTS[resolvedID] and ALL_INTERRUPTS[resolvedID].cd) or 15
                     info.cdEnd = now + baseCd
                     info.lastKickTime = now
+                    DLog("KICK", cleanName .. " kick→CD=" .. baseCd .. "s (addon)")
                     if spyMode then
                         print("|cFF00DDDD[SPY]|r " .. cleanName .. " used kick → CD=" .. baseCd .. "s (pending confirm)")
                     end
@@ -611,6 +603,7 @@ local function OnSpellCastSucceeded(unit, castGUID, spellID, isParty, cleanName)
                     cdEnd = now + (ALL_INTERRUPTS[spellID] and ALL_INTERRUPTS[spellID].cd or 15),
                     lastKickTime = now,
                 }
+                DLog("REG", cleanName .. " auto-reg via addon msg (cls=" .. tostring(cls) .. ")")
                 SetDisplayDirty()
             end
         end
@@ -644,7 +637,6 @@ local function OnSpellCastSucceeded(unit, castGUID, spellID, isParty, cleanName)
     myKickCdEnd = GetTime() + cd
     SendLOXX("CAST:" .. cd)
     RecordKick(myName)
-    AdvanceRotation()
 end
 
 local function CleanPartyList()
@@ -697,6 +689,8 @@ local function AutoRegisterPartyByClass()
                     local role = UnitGroupRolesAssigned(u)
                     local isHealer = (role == "HEALER")
                     if (isHealer or UnitIsMistweaver(u)) and not HEALER_KEEPS_KICK[cls] then
+                        -- Mark as known non-kicker so the SUCC watcher skips their timestamps
+                        noInterruptPlayers[name] = true
                         if spyMode then
                             print("|cFF00DDDD[SPY]|r Skipping " .. name .. " (" .. cls .. " no-kick spec) - no kick expected")
                         end
@@ -1151,16 +1145,6 @@ local function RebuildBars()
             if GameTooltip:GetOwner() == self then GameTooltip:Hide() end
         end)
 
-        -- Rotation highlight: yellow left border on the current rotation player's bar
-        local rotHL = f:CreateTexture(nil, "OVERLAY")
-        rotHL:SetTexture(FLAT_TEX)
-        rotHL:SetVertexColor(1, 0.85, 0, 1)
-        rotHL:SetPoint("TOPLEFT",    0, 0)
-        rotHL:SetPoint("BOTTOMLEFT", 0, 0)
-        rotHL:SetWidth(3)
-        rotHL:Hide()
-        f.rotHighlight = rotHL
-
         f:Hide()
         bars[i] = f
     end
@@ -1379,11 +1363,6 @@ local function UpdateDisplay()
             bar.cdBar:SetStatusBarColor(col[1], col[2], col[3], 0.85)
             bar.ttRem = 0
         end
-        -- Rotation highlight for self bar
-        if bar.rotHighlight then
-            local isRotTurn = db.rotationEnabled and rotationOrder[rotationIndex] == myName
-            if isRotTurn then bar.rotHighlight:Show() else bar.rotHighlight:Hide() end
-        end
         barIdx = barIdx + 1
     end
 
@@ -1522,11 +1501,6 @@ local function UpdateDisplay()
             local icon = e.ekIcon or (e.ekData and e.ekData.icon)
             local spName = (e.ekData and e.ekData.name) or (e.ek.name) or "?"
             RenderPartyBar(bar, icon, e.name, col, e.baseCd, e.ekRem, spName)
-        end
-        -- Rotation highlight for party bar
-        if bar.rotHighlight then
-            local isRotTurn = db.rotationEnabled and rotationOrder[rotationIndex] == e.name
-            if isRotTurn then bar.rotHighlight:Show() else bar.rotHighlight:Hide() end
         end
         barIdx = barIdx + 1
     end
@@ -1777,10 +1751,9 @@ end
 ------------------------------------------------------------
 -- Config panel
 ------------------------------------------------------------
--- Forward declarations: ShowStatsWindow and ShowRotationPanel are defined later
+-- Forward declarations: ShowStatsWindow is defined later
 -- in the file but referenced here (CreateConfigPanel / SetupSlash).
 local ShowStatsWindow
-local ShowRotationPanel
 
 -- Compatibility helper: create a labeled slider without deprecated templates.
 -- Layout:   [Text centered above]
@@ -2347,49 +2320,6 @@ local function CreateConfigPanel()
     yR = yR - 30
     CreateCheckbox(configFrame, L["CB_TOOLTIP"], R_CBX1, yR, "showTooltip")
 
-    -- ROTATION
-    yR = yR - 52
-    SectionLabelR(L["SEC_ROTATION"], yR)
-    yR = yR - 30
-    local rotCb = CreateFrame("CheckButton", nil, configFrame, "UICheckButtonTemplate")
-    rotCb:SetPoint("TOPLEFT", R_CBX1, yR)
-    local rotLbl = rotCb.text or rotCb.Text
-    if rotLbl then rotLbl:SetText(L["CB_ROTATION"]) end
-    rotCb:SetChecked(db.rotationEnabled)
-    rotCb:SetScript("OnClick", function(self)
-        if ROTATION_MAINTENANCE then return end
-        db.rotationEnabled = self:GetChecked() and true or false
-        if LOXXSavedVars then LOXXSavedVars.rotationEnabled = db.rotationEnabled end
-    end)
-
-    yR = yR - 34
-    local mgrBtn = CreateFrame("Button", nil, configFrame, "UIPanelButtonTemplate")
-    mgrBtn:SetSize(150, 24)
-    mgrBtn:SetPoint("TOPLEFT", R_CBX1, yR)
-    mgrBtn:SetText(L["BTN_MANAGE_ROT"])
-    mgrBtn:SetScript("OnClick", function()
-        if ROTATION_MAINTENANCE then return end
-        ShowRotationPanel()
-    end)
-
-    -- Maintenance overlay for the ROTATION section
-    if ROTATION_MAINTENANCE then
-        rotCb:Disable()
-        mgrBtn:Disable()
-        local rotOverlay = CreateFrame("Frame", nil, configFrame)
-        rotOverlay:SetFrameLevel(rotCb:GetFrameLevel() + 20)
-        rotOverlay:SetPoint("TOPLEFT", rotCb, "TOPLEFT", -6, 6)
-        rotOverlay:SetPoint("BOTTOMRIGHT", mgrBtn, "BOTTOMRIGHT", 150, -22)
-        rotOverlay:EnableMouse(true)
-        local rotBg = rotOverlay:CreateTexture(nil, "BACKGROUND")
-        rotBg:SetAllPoints()
-        rotBg:SetTexture(FLAT_TEX)
-        rotBg:SetVertexColor(0.2, 0.2, 0.2, 0.75)
-        local rotTxt = rotOverlay:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        rotTxt:SetPoint("TOP", mgrBtn, "BOTTOM", 0, -4)
-        rotTxt:SetText("|cFF888888" .. L["ROT_MAINTENANCE"] .. "|r")
-    end
-
     -- ── FOOTER ───────────────────────────────────────────────────
     local footerBand = CreateFrame("Frame", nil, configFrame)
     footerBand:SetHeight(78)
@@ -2730,6 +2660,83 @@ local function SetupSlash()
             if loxxCurrentRun and loxxCurrentRun.instanceID ~= -1 then loxxCurrentRun = nil end
             if statsFrame then statsFrame:Hide(); statsFrame = nil end
             print("|cFF00DDDD[LOXX]|r " .. L["CMD_HIST_CLEAR"])
+        elseif cmd == "record" then
+            if loxxDungeonLogActive then
+                loxxDungeonLogActive = false
+                print("|cFF00DDDD[LOXX]|r Dungeon log |cFFFF4444STOPPED|r — " .. #loxxDungeonLog .. " entries. /loxx record show to view.")
+            else
+                loxxDungeonLog = {}
+                loxxDungeonLogActive = true
+                -- Snapshot party at start
+                local party = {}
+                for i = 1, 4 do
+                    local u = "party" .. i
+                    if UnitExists(u) then
+                        local n = UnitName(u) or "?"
+                        local _, cls = UnitClass(u)
+                        table.insert(party, n .. "(" .. (cls or "?") .. ")")
+                    end
+                end
+                DLog("START", "Manual start — party: " .. (next(party) and table.concat(party, ", ") or "solo"))
+                print("|cFF00DDDD[LOXX]|r Dungeon log |cFF00FF00STARTED|r. /loxx record to stop, /loxx record show to view.")
+            end
+        elseif cmd == "record show" then
+            -- Open scrollable copy-paste window
+            if dungeonLogFrame then dungeonLogFrame:Hide(); dungeonLogFrame = nil end
+            if #loxxDungeonLog == 0 then
+                print("|cFF00DDDD[LOXX]|r No dungeon log entries yet.")
+            else
+                local f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+                dungeonLogFrame = f
+                f:SetSize(700, 500)
+                f:SetPoint("CENTER")
+                f:SetFrameStrata("DIALOG")
+                f:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+                    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border", tile = true,
+                    tileSize = 32, edgeSize = 32,
+                    insets = { left = 11, right = 12, top = 12, bottom = 11 } })
+                f:SetMovable(true)
+                f:EnableMouse(true)
+                f:RegisterForDrag("LeftButton")
+                f:SetScript("OnDragStart", f.StartMoving)
+                f:SetScript("OnDragStop", f.StopMovingOrSizing)
+                -- Header
+                local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+                title:SetPoint("TOP", f, "TOP", 0, -16)
+                title:SetText("|cFF00DDDDLoxx Dungeon Log|r — " .. #loxxDungeonLog .. " entries" .. (loxxDungeonLogActive and " |cFF00FF00[LIVE]|r" or ""))
+                -- Hint
+                local hint = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                hint:SetPoint("TOP", title, "BOTTOM", 0, -4)
+                hint:SetText("Click inside the text area, then Ctrl+A / Ctrl+C to copy all")
+                hint:SetTextColor(0.7, 0.7, 0.7)
+                -- Close button
+                local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+                closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -5, -5)
+                closeBtn:SetScript("OnClick", function() f:Hide(); dungeonLogFrame = nil end)
+                -- ScrollFrame + EditBox
+                local sf = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
+                sf:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -60)
+                sf:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -32, 16)
+                local eb = CreateFrame("EditBox", nil, sf)
+                eb:SetSize(sf:GetWidth(), 1)
+                eb:SetMultiLine(true)
+                eb:SetAutoFocus(false)
+                eb:SetFontObject(GameFontHighlightSmall)
+                eb:SetMaxLetters(0)
+                eb:SetScript("OnEscapePressed", function() f:Hide(); dungeonLogFrame = nil end)
+                sf:SetScrollChild(eb)
+                -- Fill text
+                local lines = table.concat(loxxDungeonLog, "\n")
+                eb:SetText(lines)
+                -- Resize EditBox to fit content
+                eb:SetWidth(sf:GetWidth())
+                f:Show()
+            end
+        elseif cmd == "record clear" then
+            loxxDungeonLog = {}
+            loxxDungeonLogActive = false
+            if dungeonLogFrame then dungeonLogFrame:Hide(); dungeonLogFrame = nil end
+            print("|cFF00DDDD[LOXX]|r Dungeon log cleared.")
         elseif cmd == "logs" or cmd == "log" then
             if #loxxErrorLog == 0 then
                 print("|cFF00DDDD[LOXX]|r " .. L["CMD_NO_LOGS"])
@@ -2747,7 +2754,7 @@ local function SetupSlash()
             if LOXXSavedVars then LOXXSavedVars.loxxErrorLog = {} end
             print("|cFF00DDDD[LOXX]|r " .. L["CMD_LOG_CLEAR"])
         elseif cmd == "help" then
-            print("|cFF00DDDD[LOXX]|r /loxx, /loxx config|options|settings, show, hide, lock, unlock, test, stats, stats clear, logs, logs clear, ping, spy, pos, debug, help")
+            print("|cFF00DDDD[LOXX]|r /loxx, /loxx config|options|settings, show, hide, lock, unlock, test, stats, stats clear, logs, logs clear, record, record show, record clear, ping, spy, pos, debug, help")
         else
             -- Default: open config
             CreateConfigPanel()
@@ -2798,21 +2805,6 @@ RecordKick = function(playerName)
     if not loxxCurrentRun then return end
     if not IsInInstance() then return end
     loxxCurrentRun.players[playerName] = (loxxCurrentRun.players[playerName] or 0) + 1
-end
-
-------------------------------------------------------------
--- Interrupt rotation
-------------------------------------------------------------
-AdvanceRotation = function()
-    if not db.rotationEnabled or #rotationOrder == 0 then return end
-    rotationIndex = rotationIndex % #rotationOrder + 1
-    if LOXXSavedVars then LOXXSavedVars.rotationIndex = rotationIndex end
-    SendLOXX("ROT_IDX:" .. rotationIndex)
-end
-
-BroadcastRotation = function()
-    if #rotationOrder == 0 then return end
-    SendLOXX("ROT:" .. table.concat(rotationOrder, ",") .. ":" .. rotationIndex)
 end
 
 -------------------------------------------------------------
@@ -3054,143 +3046,6 @@ ShowStatsWindow = function()
 end
 
 ------------------------------------------------------------
--- Rotation panel
-------------------------------------------------------------
-local function BuildRotationPanel()
-    if not rotationPanel then return end
-    -- Auto-populate from party if list is empty
-    if #rotationOrder == 0 then
-        if myName then rotationOrder[#rotationOrder+1] = myName end
-        for i = 1, 4 do
-            local u = "party" .. i
-            if UnitExists(u) then
-                local n = UnitName(u)
-                if n and n ~= myName then rotationOrder[#rotationOrder+1] = n end
-            end
-        end
-        rotationIndex = 1
-    end
-    rotationPanel.rows = rotationPanel.rows or {}
-    for _, rf in ipairs(rotationPanel.rows) do rf:Hide() end
-
-    local y = -80
-    for i, name in ipairs(rotationOrder) do
-        local idx = i
-        local f = rotationPanel.rows[idx]
-        if not f then
-            f = CreateFrame("Frame", nil, rotationPanel)
-            f:SetSize(204, 24)
-            f.nm = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            f.nm:SetPoint("LEFT", 4, 0)
-            f.nm:SetWordWrap(false)
-            f.upBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-            f.upBtn:SetSize(20, 18) ; f.upBtn:SetPoint("RIGHT", -24, 0) ; f.upBtn:SetText("^")
-            f.downBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-            f.downBtn:SetSize(20, 18) ; f.downBtn:SetPoint("RIGHT", -2, 0) ; f.downBtn:SetText("v")
-            rotationPanel.rows[idx] = f
-        end
-        f:ClearAllPoints()
-        f:SetPoint("TOPLEFT", 8, y)
-        local isCurrent = (idx == rotationIndex) and db.rotationEnabled
-        f.nm:SetText((isCurrent and "|cFFFFD100>>> |r" or "      ") .. idx .. ". " .. name)
-        if idx > 1 then
-            f.upBtn:Show()
-            f.upBtn:SetScript("OnClick", function()
-                rotationOrder[idx], rotationOrder[idx-1] = rotationOrder[idx-1], rotationOrder[idx]
-                if rotationIndex == idx then rotationIndex = idx - 1
-                elseif rotationIndex == idx - 1 then rotationIndex = idx end
-                if LOXXSavedVars then LOXXSavedVars.rotationOrder = rotationOrder end
-                BuildRotationPanel()
-            end)
-        else f.upBtn:Hide() end
-        if idx < #rotationOrder then
-            f.downBtn:Show()
-            f.downBtn:SetScript("OnClick", function()
-                rotationOrder[idx], rotationOrder[idx+1] = rotationOrder[idx+1], rotationOrder[idx]
-                if rotationIndex == idx then rotationIndex = idx + 1
-                elseif rotationIndex == idx + 1 then rotationIndex = idx end
-                if LOXXSavedVars then LOXXSavedVars.rotationOrder = rotationOrder end
-                BuildRotationPanel()
-            end)
-        else f.downBtn:Hide() end
-        f:Show()
-        y = y - 28
-    end
-    rotationPanel:SetHeight(math.max(340, 120 + #rotationOrder * 28))
-end
-
-ShowRotationPanel = function()
-    if ROTATION_MAINTENANCE then return end
-    if not rotationPanel then
-        if not configFrame then return end
-
-        local RW, RH = 240, 340
-        rotationPanel = CreateFrame("Frame", "LOXXRotationPanel", UIParent, "BasicFrameTemplate")
-        rotationPanel:SetSize(RW, RH)
-        rotationPanel:SetPoint("TOPLEFT", configFrame, "TOPRIGHT", 4, 0)
-        if rotationPanel.TitleText then rotationPanel.TitleText:SetText("") end
-        rotationPanel:SetMovable(true)
-        rotationPanel:EnableMouse(true)
-        rotationPanel:RegisterForDrag("LeftButton")
-        rotationPanel:SetScript("OnDragStart", rotationPanel.StartMoving)
-        rotationPanel:SetScript("OnDragStop",  rotationPanel.StopMovingOrSizing)
-        rotationPanel:SetClampedToScreen(true)
-        rotationPanel:SetFrameStrata("DIALOG")
-
-        -- Header (same styling as the Changelog frame)
-        local hdr = rotationPanel:CreateTexture(nil, "BACKGROUND", nil, 2)
-        hdr:SetTexture(FLAT_TEX)
-        hdr:SetVertexColor(0.12, 0.09, 0.02, 1)
-        hdr:SetPoint("TOPLEFT",  0, -22)
-        hdr:SetPoint("TOPRIGHT", 0, -22)
-        hdr:SetHeight(52)
-        local hdrLineTop = rotationPanel:CreateTexture(nil, "BORDER")
-        hdrLineTop:SetTexture(FLAT_TEX)
-        hdrLineTop:SetVertexColor(0.87, 0.73, 0.37, 0.75)
-        hdrLineTop:SetPoint("TOPLEFT",  0, -22)
-        hdrLineTop:SetPoint("TOPRIGHT", 0, -22)
-        hdrLineTop:SetHeight(1)
-        local hdrLineBot = rotationPanel:CreateTexture(nil, "BORDER")
-        hdrLineBot:SetTexture(FLAT_TEX)
-        hdrLineBot:SetVertexColor(0.87, 0.73, 0.37, 0.75)
-        hdrLineBot:SetPoint("TOPLEFT",  0, -74)
-        hdrLineBot:SetPoint("TOPRIGHT", 0, -74)
-        hdrLineBot:SetHeight(1)
-        local hdrTitle = rotationPanel:CreateFontString(nil, "OVERLAY")
-        hdrTitle:SetFont(FONT_FACE, 22, FONT_FLAGS)
-        hdrTitle:SetShadowOffset(2, -2)
-        hdrTitle:SetShadowColor(0, 0, 0, 1)
-        hdrTitle:SetPoint("TOP", 0, -34)
-        hdrTitle:SetJustifyH("CENTER")
-        hdrTitle:SetText("|cFFFFD100" .. L["ROT_TITLE"] .. "|r")
-
-        -- Permanent bottom buttons
-        local resetBtn = CreateFrame("Button", nil, rotationPanel, "UIPanelButtonTemplate")
-        resetBtn:SetSize(80, 22) ; resetBtn:SetPoint("BOTTOMLEFT", 8, 8) ; resetBtn:SetText(L["ROT_RESET"])
-        resetBtn:SetScript("OnClick", function()
-            rotationOrder = {} ; rotationIndex = 1
-            if LOXXSavedVars then
-                LOXXSavedVars.rotationOrder = rotationOrder
-                LOXXSavedVars.rotationIndex = rotationIndex
-            end
-            BuildRotationPanel()
-        end)
-        local syncBtn = CreateFrame("Button", nil, rotationPanel, "UIPanelButtonTemplate")
-        syncBtn:SetSize(80, 22) ; syncBtn:SetPoint("BOTTOMRIGHT", -8, 8) ; syncBtn:SetText(L["ROT_SYNC"])
-        syncBtn:SetScript("OnClick", function()
-            if LOXXSavedVars then
-                LOXXSavedVars.rotationOrder = rotationOrder
-                LOXXSavedVars.rotationIndex = rotationIndex
-            end
-            BroadcastRotation()
-            print("|cFF00DDDD[LOXX]|r " .. L["ROT_SYNCED"])
-        end)
-    end
-    BuildRotationPanel()
-    if rotationPanel:IsShown() then rotationPanel:Hide() else rotationPanel:Show() end
-end
-
-------------------------------------------------------------
 -- Initialize
 ------------------------------------------------------------
 local function RegisterBlizzardOptions()
@@ -3383,8 +3238,6 @@ local function Initialize()
     LOXXSavedVars.loxxRunHistory = LOXXSavedVars.loxxRunHistory or {}
     LOXXSavedVars.loxxErrorLog   = LOXXSavedVars.loxxErrorLog   or {}
     loxxErrorLog = LOXXSavedVars.loxxErrorLog
-    rotationOrder = LOXXSavedVars.rotationOrder or {}
-    rotationIndex = LOXXSavedVars.rotationIndex or 1
 
     -- Account-wide storage (position shared across all characters)
     LOXXAccountVars = LOXXAccountVars or {}
@@ -3458,10 +3311,13 @@ local playerCastFrame = CreateFrame("Frame")
 playerCastFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "pet")
 playerCastFrame:SetScript("OnEvent", function(_, _, unit, castGUID, spellID)
     -- Debug: log all player/pet casts in spy mode
-    if spyMode and unit == "player" then
+    if unit == "player" then
         local isInterrupt = ALL_INTERRUPTS[spellID] and "YES" or "no"
         local isExtra = myExtraKicks[spellID] and "YES" or "no"
-        print("|cFF00DDDD[SPY]|r PLAYER cast spellID=" .. tostring(spellID) .. " interrupt=" .. isInterrupt .. " extra=" .. isExtra)
+        DLog("SELF", "spellID=" .. tostring(spellID) .. " interrupt=" .. isInterrupt .. " extra=" .. isExtra)
+        if spyMode then
+            print("|cFF00DDDD[SPY]|r PLAYER cast spellID=" .. tostring(spellID) .. " interrupt=" .. isInterrupt .. " extra=" .. isExtra)
+        end
     end
 
     if unit == "pet" then
@@ -3506,7 +3362,6 @@ playerCastFrame:SetScript("OnEvent", function(_, _, unit, castGUID, spellID)
                     -- fires on unit=="pet", not "player", so SendLOXX must be called here)
                     SendLOXX("CAST:" .. cd)
                     RecordKick(myName)
-                    AdvanceRotation()
                     if spyMode then
                         print("|cFF00DDDD[SPY]|r   → PRIMARY kick: " .. data.name .. " CD=" .. cd .. " (broadcast sent)")
                     end
@@ -3524,8 +3379,14 @@ end)
 -- Track recent party casts for correlation (timestamp per player name)
 local recentPartyCasts = {}
 
+-- Dedup: track last successful correlation to avoid double-counting when
+-- both nameplate and target frames fire for the same mob (within 0.1s)
+local lastCorrName = nil
+local lastCorrTime = 0
+
 -- Handler for mob interrupt detection
 local function OnMobInterrupted(unit)
+    DLog("MOB", "INTERRUPTED on " .. tostring(unit))
     if spyMode then
         print("|cFF00DDDD[SPY-MOB]|r INTERRUPTED on " .. tostring(unit))
     end
@@ -3537,7 +3398,7 @@ local function OnMobInterrupted(unit)
 
     for name, ts in pairs(recentPartyCasts) do
         local delta = now - ts
-        if delta > 1.0 then
+        if delta > 0.8 then
             recentPartyCasts[name] = nil
         elseif delta < bestDelta then
             bestDelta = delta
@@ -3545,7 +3406,20 @@ local function OnMobInterrupted(unit)
         end
     end
 
-    if bestName and bestDelta < 1.5 then
+    if bestName and bestDelta < 0.8 then
+        -- Consume the timestamp so duplicate INTERRUPTED events (nameplate + target
+        -- firing for the same mob in the same frame) cannot match this player again.
+        recentPartyCasts[bestName] = nil
+
+        -- Safety-net time-based dedup (catches edge cases where bestName changes)
+        if bestName == lastCorrName and (now - lastCorrTime) < 0.2 then
+            DLog("CORR", "dedup skip " .. bestName)
+            return
+        end
+        lastCorrName = bestName
+        lastCorrTime = now
+
+        DLog("CORR", bestName .. " matched delta=" .. string.format("%.3f", bestDelta) .. "s")
         if spyMode then
             print("  |cFF00FF00>>> " .. bestName .. " kicked successfully! (delta=" .. string.format("%.3f", bestDelta) .. "s)|r")
         end
@@ -3556,11 +3430,13 @@ local function OnMobInterrupted(unit)
             -- This is the fallback path when UNIT_SPELLCAST_SUCCEEDED spell ID is secret.
             local baseCd = info.baseCd or 15
             info.cdEnd = now + baseCd
+            DLog("KICK", bestName .. " CD=" .. baseCd .. "s (corr/existing)")
             -- Apply conditional CD reduction on top (e.g., Coldthirst: -3s on successful kick)
             if info.onKickReduction then
                 local newCdEnd = info.cdEnd - info.onKickReduction
                 if newCdEnd < now then newCdEnd = now end
                 info.cdEnd = newCdEnd
+                DLog("KICK", bestName .. " Coldthirst -" .. info.onKickReduction .. "s → rem=" .. string.format("%.0f", newCdEnd - now) .. "s")
                 if spyMode then
                     local rem = newCdEnd - now
                     print("  |cFFFFFF00Coldthirst! CD reduced by " .. info.onKickReduction .. "s → " .. string.format("%.0f", rem) .. "s remaining|r")
@@ -3583,6 +3459,8 @@ local function OnMobInterrupted(unit)
                                 baseCd = kickInfo.cd,
                                 cdEnd = now + kickInfo.cd,
                             }
+                            DLog("REG", bestName .. " auto-reg via corr cls=" .. tostring(cls) .. " CD=" .. kickInfo.cd)
+                            SetDisplayDirty()
                             if spyMode then
                                 print("  Registered " .. bestName .. " (" .. cls .. ") CD=" .. kickInfo.cd)
                             end
@@ -3592,8 +3470,11 @@ local function OnMobInterrupted(unit)
                 end
             end
         end
-    elseif spyMode then
-        print("  No matching party cast (best=" .. tostring(bestName) .. " delta=" .. string.format("%.3f", bestDelta) .. ")")
+    else
+        DLog("CORR", "NO MATCH best=" .. tostring(bestName) .. " delta=" .. string.format("%.3f", bestDelta))
+        if spyMode then
+            print("  No matching party cast (best=" .. tostring(bestName) .. " delta=" .. string.format("%.3f", bestDelta) .. ")")
+        end
     end
 end
 
@@ -3630,16 +3511,43 @@ RegisterPartyWatchers = function()
                 local cleanUnit = "party" .. i
                 local cleanName = UnitName(cleanUnit)
 
-                -- Store timestamp for correlation backup
-                if cleanName then
-                    recentPartyCasts[cleanName] = GetTime()
+                -- Store timestamp for correlation only if:
+                --   1. This player's kick is not already on CD, AND
+                --   2. They could actually have an interrupt (class check for unknown players)
+                -- This prevents healers without interrupts (Holy Priest, etc.) from
+                -- polluting recentPartyCasts and causing false correlations.
+                if cleanName and not noInterruptPlayers[cleanName] then
+                    local info = partyAddonUsers[cleanName]
+                    local kickOnCd = info and info.cdEnd and (info.cdEnd > GetTime() + 0.5)
+                    if not kickOnCd then
+                        local canKick = info ~= nil  -- already a tracked kicker
+                        if not canKick then
+                            local _, cls = UnitClass(unit)
+                            local role = UnitGroupRolesAssigned(unit)
+                            -- UnitGroupRolesAssigned can return "NONE" in M+ (roles not set),
+                            -- so also check UnitIsMistweaver to catch Mistweaver Monks whose
+                            -- role isn't explicitly assigned but who don't reliably interrupt.
+                            local isHealerOrMW = (role == "HEALER") or UnitIsMistweaver(unit)
+                            canKick = cls and CLASS_INTERRUPTS[cls] and
+                                      not (isHealerOrMW and not HEALER_KEEPS_KICK[cls])
+                        end
+                        if canKick then
+                            recentPartyCasts[cleanName] = GetTime()
+                        end
+                    end
                 end
 
                 -- In Midnight, eSpellID is a secret value and cannot be used
                 -- as a table index. Detection is handled entirely by
                 -- UNIT_SPELLCAST_INTERRUPTED correlation (timestamp above).
-                if spyMode then
-                    print("|cFF00DDDD[SPY]|r SUCCEEDED " .. cleanUnit .. " (" .. tostring(cleanName) .. ") — timestamp stored for correlation")
+                do
+                    local info = cleanName and partyAddonUsers[cleanName]
+                    local skipped = info and info.cdEnd and (info.cdEnd > GetTime() + 0.5)
+                    DLog("SUCC", tostring(cleanName) .. (skipped and " SKIP(CD)" or " stored"))
+                    if spyMode then
+                        local suffix = skipped and " — SKIPPED (kick on CD)" or " — timestamp stored for correlation"
+                        print("|cFF00DDDD[SPY]|r SUCCEEDED " .. cleanUnit .. " (" .. tostring(cleanName) .. ")" .. suffix)
+                    end
                 end
             end)
         end
@@ -3664,15 +3572,25 @@ RegisterPartyWatchers = function()
                 local cleanOwner = "party" .. i
                 local cleanName = UnitName(cleanOwner)
 
-                -- Store timestamp for correlation
+                -- Store timestamp for correlation only if owner's kick is not already on CD.
                 if cleanName then
-                    recentPartyCasts[cleanName] = GetTime()
+                    local info = partyAddonUsers[cleanName]
+                    local kickOnCd = info and info.cdEnd and (info.cdEnd > GetTime() + 0.5)
+                    if not kickOnCd then
+                        recentPartyCasts[cleanName] = GetTime()
+                    end
                 end
 
                 -- In Midnight, eSpellID is a secret value for party pets too.
                 -- Timestamp stored above is sufficient for correlation.
-                if spyMode then
-                    print("|cFF00DDDD[SPY]|r PET SUCCEEDED partypet" .. i .. " (owner=" .. tostring(cleanName) .. ") — timestamp stored")
+                do
+                    local info = cleanName and partyAddonUsers[cleanName]
+                    local skipped = info and info.cdEnd and (info.cdEnd > GetTime() + 0.5)
+                    DLog("PET", tostring(cleanName) .. (skipped and " SKIP(CD)" or " stored"))
+                    if spyMode then
+                        local suffix = skipped and " — SKIPPED (kick on CD)" or " — timestamp stored"
+                        print("|cFF00DDDD[SPY]|r PET SUCCEEDED partypet" .. i .. " (owner=" .. tostring(cleanName) .. ")" .. suffix)
+                    end
                 end
             end)
         end
@@ -3805,11 +3723,6 @@ ef:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
                 StartNewRun()
             end
         end
-        -- Rotation: restore from SavedVars
-        if LOXXSavedVars and LOXXSavedVars.rotationOrder then
-            rotationOrder = LOXXSavedVars.rotationOrder
-            rotationIndex = LOXXSavedVars.rotationIndex or 1
-        end
         C_Timer.After(1, AutoRegisterPartyByClass)
         C_Timer.After(2, QueuePartyInspect) -- inspect any not-yet-inspected members
         C_Timer.After(3, function()
@@ -3819,6 +3732,20 @@ ef:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
         end)
     elseif event == "CHALLENGE_MODE_START" then
         StartNewRun()
+        -- Auto-start dungeon log on M+ key start
+        loxxDungeonLog = {}
+        loxxDungeonLogActive = true
+        local party = {}
+        for i = 1, 4 do
+            local u = "party" .. i
+            if UnitExists(u) then
+                local n = UnitName(u) or "?"
+                local _, cls = UnitClass(u)
+                table.insert(party, n .. "(" .. (cls or "?") .. ")")
+            end
+        end
+        DLog("START", "M+ key started — party: " .. (next(party) and table.concat(party, ", ") or "solo"))
+        print("|cFF00DDDD[LOXX]|r Dungeon log started. /loxx record show to view.")
     elseif event == "PLAYER_LOGOUT" then
         ArchiveCurrentRun()  -- persist current run even if no new run started
         if mainFrame then LoxxSaveFramePosition(mainFrame) end
