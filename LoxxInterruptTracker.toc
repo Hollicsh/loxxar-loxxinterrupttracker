@@ -6,7 +6,7 @@
 ## Notes-koKR: 쐐기돌 던전용 파티 차단기 쿨다운 추적기
 ## Notes-zhCN: 大秘境地下城团队打断冷却追踪器
 ## Notes-zhTW: 傳奇鑰石地城隊伍斷法冷卻追蹤器
-## Author: Loxxar (original by KinderLine)
+## Author: Loxxar
 ## Version: 1.3.1
 ## SavedVariables: LOXXSavedVars
 ## SavedVariablesPerAccount: LOXXAccountVars

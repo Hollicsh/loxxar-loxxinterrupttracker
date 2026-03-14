@@ -1,10 +1,9 @@
 --[[
-    Loxx Interrupt Tracker v1.2.5.4 - Midnight 12.0.x
+    Loxx Interrupt Tracker - Midnight 12.0.x
 
-    Maintained by Loxxar.
+    Author: Loxxar
 
     - Addon-to-addon sync (SendAddonMessage)
-    - ShimmerTracker pattern for player CD (taint-safe)
     - ElvUI auto-detection (font, texture)
     - Simplified config (/loxx)
     - Corner drag-to-resize
